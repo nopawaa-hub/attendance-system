@@ -170,7 +170,18 @@ router.get('/add', requireAuth, (req, res) => {
 </div>
 <script>
 const map = L.map('map').setView([3.139, 101.6869], 13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+// Google Maps tiles: street + satellite layers with a toggle.
+const streets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'], attribution: '&copy; Google Maps' });
+const satellite = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'], attribution: '&copy; Google Maps' });
+streets.addTo(map);
+L.control.layers({ 'Map': streets, 'Satellite': satellite }, null, { position: 'topright' }).addTo(map);
+let youMarker;
+function showYou(lat, lng, acc) {
+  map.setView([lat, lng], 17);
+  if (youMarker) map.removeLayer(youMarker);
+  youMarker = L.circle([lat, lng], { radius: acc || 20, color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 0.3, weight: 1 }).addTo(map);
+  L.circleMarker([lat, lng], { radius: 5, color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 1 }).addTo(map);
+}
 let marker, circle;
 function place(lat, lng) {
   document.getElementById('lat').value = lat;
@@ -189,7 +200,14 @@ document.getElementById('radius').addEventListener('input', drawCircle);
 document.querySelector('form').addEventListener('submit', e => {
   if (!document.getElementById('lat').value) { alert('Please click the map to set the programme location.'); e.preventDefault(); }
 });
-if (navigator.geolocation) navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 15));
+// Show where the admin actually is.
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    p => showYou(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
+    err => console.warn('Geolocation unavailable:', err.message),
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+}
 </script>`
   }));
 });
