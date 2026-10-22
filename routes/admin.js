@@ -243,16 +243,40 @@ radiusInput.addEventListener('input', drawCircle);
 document.querySelector('form').addEventListener('submit', e => {
   if (!document.getElementById('lat').value) { alert('Please click the map to set the programme location.'); e.preventDefault(); }
 });
-// Jump to the admin's actual location on load.
+// Jump to the admin's actual location on load + persistent blue "you are here" dot.
 map.on('load', () => {
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      p => { map.jumpTo({ center: [p.coords.longitude, p.coords.latitude], zoom: 17 }); },
-      err => console.warn('Geolocation unavailable:', err.message),
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  }
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    p => { map.jumpTo({ center: [p.coords.longitude, p.coords.latitude], zoom: 16 }); showYou(p); },
+    err => console.warn('Geolocation unavailable:', err.message),
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+  navigator.geolocation.watchPosition(showYou, () => {}, { enableHighAccuracy: true });
 });
+let youLayerAdded = false;
+function showYou(p) {
+  const lng = p.coords.longitude, lat = p.coords.latitude, acc = p.coords.accuracy || 30;
+  // accuracy circle
+  const pts = [];
+  for (let i = 0; i <= 64; i++) {
+    const a = (i / 64) * 2 * Math.PI;
+    pts.push([lng + (acc / 111320 / Math.cos(lat * Math.PI / 180)) * Math.cos(a), lat + (acc / 110540) * Math.sin(a)]);
+  }
+  if (map.getSource('you')) { map.getSource('you').setData({ type: 'Point', coordinates: [lng, lat] }); }
+  else map.addSource('you', { type: 'geojson', data: { type: 'Point', coordinates: [lng, lat] } });
+  if (!youLayerAdded) {
+    map.addLayer({ id: 'you-dot', type: 'circle', source: 'you', paint: { 'circle-radius': 8, 'circle-color': '#2563eb', 'circle-stroke-width': 3, 'circle-stroke-color': '#ffffff' } });
+    youLayerAdded = true;
+  }
+  if (map.getSource('you-acc')) { map.getSource('you-acc').setData({ type: 'Polygon', coordinates: [[...pts, pts[0]]] }); }
+  else {
+    map.addSource('you-acc', { type: 'geojson', data: { type: 'Polygon', coordinates: [[...pts, pts[0]]] } });
+    map.addLayer({ id: 'you-acc-fill', type: 'fill', source: 'you-acc', paint: { 'fill-color': '#2563eb', 'fill-opacity': 0.15 } });
+  }
+}
+// the style toggle wipes layers — redraw your dot too
+const origRedraw = redrawAll;
+redrawAll = function() { origRedraw(); youLayerAdded = false; };
 </script>`
   }));
 });
