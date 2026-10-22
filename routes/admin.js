@@ -411,6 +411,8 @@ router.get('/programme/:id', requireAuth, (req, res) => {
     <td class="px-4 py-2">${a.distance_m == null ? '—' : Math.round(a.distance_m) + ' m'}</td>
     <td class="px-4 py-2 text-slate-500">${a.ip || '—'}</td>
   </tr>`).join('');
+  const pins = rows.filter(a => a.lat != null && a.lng != null)
+    .map(a => ({ lng: a.lng, lat: a.lat, id: a.student_id, name: a.student_name, late: a.late, dist: a.distance_m }));
   res.send(page({
     title: `Attendance — ${p.name}`,
     body: `
@@ -423,6 +425,17 @@ router.get('/programme/:id', requireAuth, (req, res) => {
     </div>
     <a href="/admin/programme/${p.id}/csv" class="bg-emerald-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-emerald-700">Export CSV</a>
   </div>
+  <div class="bg-white rounded-xl shadow p-4 mb-6">
+    <div class="flex justify-between items-center mb-2">
+      <h2 class="font-semibold text-slate-700">Check-in map</h2>
+      <div class="flex items-center gap-4 text-xs text-slate-500">
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-emerald-500"></span> On time</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-amber-500"></span> Late</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full border-2 border-indigo-600"></span> Venue radius (${p.radius_m} m)</span>
+      </div>
+    </div>
+    <div id="attmap" class="h-80 rounded-lg border z-0"></div>
+  </div>
   <div class="bg-white rounded-xl shadow overflow-x-auto">
     <table class="w-full text-sm">
       <thead class="bg-slate-50 text-slate-600 text-left">
@@ -431,7 +444,48 @@ router.get('/programme/:id', requireAuth, (req, res) => {
       <tbody>${trs || '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">No attendance yet.</td></tr>'}</tbody>
     </table>
   </div>
-</div>`
+</div>
+<script>
+const venue = { lat: ${p.lat}, lng: ${p.lng}, radius: ${p.radius_m} };
+const pins = ${JSON.stringify(pins)};
+const map2 = new maplibregl.Map({
+  container: 'attmap',
+  style: { version: 8, sources: { google: { type: 'raster', tiles: ['https://mt0.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'], tileSize: 256 } }, layers: [{ id: 'google', type: 'raster', source: 'google' }] },
+  center: [venue.lng, venue.lat],
+  zoom: 16,
+  attributionControl: false
+});
+map2.addControl(new maplibregl.NavigationControl(), 'top-right');
+map2.on('load', () => {
+  // venue radius circle (indigo)
+  const pts = [];
+  for (let i = 0; i <= 64; i++) {
+    const a = (i / 64) * 2 * Math.PI;
+    pts.push([venue.lng + (venue.radius / 111320 / Math.cos(venue.lat * Math.PI / 180)) * Math.cos(a), venue.lat + (venue.radius / 110540) * Math.sin(a)]);
+  }
+  map2.addSource('venue-radius', { type: 'geojson', data: { type: 'Polygon', coordinates: [[...pts, pts[0]]] } });
+  map2.addLayer({ id: 'venue-fill', type: 'fill', source: 'venue-radius', paint: { 'fill-color': '#4f46e5', 'fill-opacity': 0.08 } });
+  map2.addLayer({ id: 'venue-line', type: 'line', source: 'venue-radius', paint: { 'line-color': '#4f46e5', 'line-width': 2 } });
+  // venue centre marker (dark pin)
+  new maplibregl.Marker({ color: '#1e1b4b' }).setLngLat([venue.lng, venue.lat]).setPopup(new maplibregl.Popup().setText('Venue centre')).addTo(map2);
+  // one dot per respondent, green = on time, amber = late
+  map2.addSource('students', { type: 'geojson', data: { type: 'FeatureCollection', features: pins.map(s => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.lng, s.lat] }, properties: { late: s.late ? 1 : 0 } })) } });
+  map2.addLayer({ id: 'student-dots', type: 'circle', source: 'students',
+    paint: { 'circle-radius': 7, 'circle-color': ['case', ['==', ['get', 'late'], 1], '#f59e0b', '#10b981'], 'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff' } });
+  map2.on('click', 'student-dots', e => {
+    const f = e.features[0];
+    const s = pins.find(p => p.lng === f.geometry.coordinates[0] && p.lat === f.geometry.coordinates[1]);
+    if (s) new maplibregl.Popup().setLngLat(f.geometry.coordinates).setHTML('<b>' + s.id + '</b> — ' + s.name + '<br>' + (s.late ? 'Late' : 'On time') + ' · ' + Math.round(s.dist) + ' m from venue').addTo(map2);
+  });
+  // fit view to include all pins
+  if (pins.length) {
+    const bounds = new maplibregl.LngLatBounds();
+    bounds.extend([venue.lng, venue.lat]);
+    pins.forEach(s => bounds.extend([s.lng, s.lat]));
+    map2.fitBounds(bounds, { padding: 60, maxZoom: 17 });
+  }
+});
+</script>`
   }));
 });
 
