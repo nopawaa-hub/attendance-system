@@ -220,8 +220,8 @@ function place(lng, lat, center = false) {
   if (center) map.easeTo({ center: [lng, lat] });
 }
 function drawCircle() {
-  const lat = document.getElementById('lat').value, lng = document.getElementById('lng').value;
-  const r = parseInt(radiusInput.value);
+  const lat = parseFloat(document.getElementById('lat').value), lng = parseFloat(document.getElementById('lng').value);
+  const r = parseFloat(radiusInput.value);
   document.getElementById('radiusVal').textContent = r;
   if (!lat) return;
   if (circle) circle.remove();
