@@ -67,7 +67,7 @@ router.get('/', requireAuth, (req, res) => {
       <td class="px-4 py-3">${p.date}</td>
       <td class="px-4 py-3">${p.start_time} – ${p.end_time}</td>
       <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs font-semibold status-badge" data-date="${p.date}" data-start="${p.start_time}" data-end="${p.end_time}">${s.label}</span></td>
-      <td class="px-4 py-3 text-center font-semibold">${p.count}</td>
+      <td class="px-4 py-3 text-center font-semibold count-cell" data-id="${p.id}">${p.count}</td>
       <td class="px-4 py-3 space-x-2 whitespace-nowrap">
         <a href="/admin/programme/${p.id}" class="text-indigo-600 hover:underline">Attendance</a>
         <a href="/admin/programme/${p.id}/qr" class="text-indigo-600 hover:underline">QR</a>
@@ -85,6 +85,7 @@ router.get('/', requireAuth, (req, res) => {
     <h1 class="text-3xl font-bold text-slate-800">Attendance Dashboard</h1>
     <div class="space-x-3">
       <a href="/admin/add" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-indigo-700">+ Add Programme</a>
+      <a href="/admin/roster" class="bg-slate-200 text-slate-700 px-4 py-2 rounded-lg font-semibold hover:bg-slate-300">Roster</a>
       <a href="/admin/logout" class="text-slate-500 hover:underline">Log out</a>
     </div>
   </div>
@@ -114,6 +115,15 @@ function refreshStatuses() {
 }
 refreshStatuses();
 setInterval(refreshStatuses, 30000);
+// Poll live attendance counts every 5s during events.
+async function refreshCounts() {
+  try {
+    const r = await fetch('/admin/counts');
+    const data = await r.json();
+    document.querySelectorAll('.count-cell').forEach(c => { if (data[c.dataset.id] != null) c.textContent = data[c.dataset.id]; });
+  } catch (e) {}
+}
+setInterval(refreshCounts, 5000);
 </script>`
   }));
 });
@@ -198,6 +208,82 @@ router.post('/programme/:id/delete', requireAuth, (req, res) => {
   res.redirect('/admin');
 });
 
+// ---- student roster ----
+router.get('/roster', requireAuth, (req, res) => {
+  const students = db.prepare('SELECT * FROM students ORDER BY student_id').all();
+  const trs = students.map(s => `<tr class="border-b hover:bg-slate-50">
+    <td class="px-4 py-2 font-medium">${s.student_id}</td>
+    <td class="px-4 py-2">${s.name}</td>
+    <td class="px-4 py-2">
+      <form method="POST" action="/admin/roster/delete/${s.id}" class="inline" onsubmit="return confirm('Remove ${s.student_id} from the roster?')">
+        <button class="text-red-600 hover:underline">Remove</button>
+      </form>
+    </td>
+  </tr>`).join('');
+  res.send(page({
+    title: 'Student Roster',
+    body: `
+<div class="max-w-4xl mx-auto p-6">
+  <a href="/admin" class="text-indigo-600 hover:underline text-sm">&larr; Back to dashboard</a>
+  <h1 class="text-2xl font-bold text-slate-800 mt-2 mb-6">Student Roster <span class="text-slate-400 text-lg font-normal">(${students.length} students)</span></h1>
+  <div class="bg-white rounded-xl shadow p-6 mb-6">
+    <h2 class="font-semibold text-slate-700 mb-2">Import students (CSV)</h2>
+    <p class="text-sm text-slate-500 mb-3">Upload a CSV with columns <code class="bg-slate-100 px-1 rounded">student_id</code> and <code class="bg-slate-100 px-1 rounded">name</code> (header row required, any column order). Existing student IDs are updated with the new name. Example:</p>
+    <pre class="bg-slate-50 border rounded p-3 text-xs text-slate-600 mb-4">student_id,name
+A123456,Ali bin Ahmad
+A123457,Siti Nurhaliza</pre>
+    ${req.query.err ? '<p class="mb-3 text-sm text-red-600 bg-red-50 rounded p-2">' + req.query.err + '</p>' : ''}
+    ${req.query.ok ? '<p class="mb-3 text-sm text-emerald-700 bg-emerald-50 rounded p-2">Imported: ' + req.query.ok + ' new, ' + req.query.upd + ' updated.</p>' : ''}
+    <form method="POST" action="/admin/roster/import" enctype="multipart/form-data" class="flex items-center gap-3">
+      <input type="file" name="csv" accept=".csv,text/csv" class="flex-1 border rounded-lg px-3 py-2 text-sm" required>
+      <button class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-indigo-700">Import</button>
+    </form>
+  </div>
+  <div class="bg-white rounded-xl shadow overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-600 text-left">
+        <tr><th class="px-4 py-3">Student ID</th><th class="px-4 py-3">Name</th><th class="px-4 py-3"></th></tr>
+      </thead>
+      <tbody>${trs || '<tr><td colspan="3" class="px-4 py-8 text-center text-slate-400">No students imported yet.</td></tr>'}</tbody>
+    </table>
+  </div>
+</div>`
+  }));
+});
+
+router.post('/roster/import', requireAuth, (req, res) => {
+  if (!req.files || !req.files.csv) return res.redirect('/admin/roster?err=' + encodeURIComponent('No file uploaded.'));
+  const content = req.files.csv.toString('utf8');
+  const lines = content.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return res.redirect('/admin/roster?err=' + encodeURIComponent('CSV needs a header row and at least one student.'));
+  const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+  const idCol = header.findIndex(h => h === 'student_id' || h === 'id' || h === 'matric');
+  const nameCol = header.findIndex(h => h === 'name' || h === 'student_name' || h === 'full name');
+  if (idCol === -1 || nameCol === -1) return res.redirect('/admin/roster?err=' + encodeURIComponent('CSV must have "student_id" and "name" columns in the header row.'));
+  const upsert = db.prepare(`INSERT INTO students (student_id, name) VALUES (?, ?) ON CONFLICT(student_id) DO UPDATE SET name = excluded.name`);
+  const existing = new Set(db.prepare('SELECT student_id FROM students').all().map(s => s.student_id));
+  let added = 0, updated = 0, skipped = 0;
+  for (const line of lines.slice(1)) {
+    const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+    const sid = cols[idCol], name = cols[nameCol];
+    if (!sid || !name) { skipped++; continue; }
+    if (existing.has(sid)) { updated++; } else { added++; existing.add(sid); }
+    upsert.run(sid, name);
+  }
+  res.redirect(`/admin/roster?ok=${added}&upd=${updated}${skipped ? '&err=' + encodeURIComponent(skipped + ' rows skipped (missing ID or name).') : ''}`);
+});
+
+router.post('/roster/delete/:sid', requireAuth, (req, res) => {
+  db.prepare('DELETE FROM students WHERE id = ?').run(req.params.sid);
+  res.redirect('/admin/roster');
+});
+
+// Live counts for dashboard polling
+router.get('/counts', requireAuth, (req, res) => {
+  const rows = db.prepare('SELECT programme_id, COUNT(*) AS c FROM attendances GROUP BY programme_id').all();
+  res.json(Object.fromEntries(rows.map(r => [r.programme_id, r.c])));
+});
+
 // ---- QR / link ----
 router.get('/programme/:id/qr', requireAuth, async (req, res) => {
   const p = db.prepare('SELECT * FROM programmes WHERE id = ?').get(req.params.id);
@@ -234,6 +320,7 @@ router.get('/programme/:id', requireAuth, (req, res) => {
     <td class="px-4 py-2 font-medium">${a.student_id}</td>
     <td class="px-4 py-2">${a.student_name}</td>
     <td class="px-4 py-2">${a.created_at} UTC</td>
+    <td class="px-4 py-2">${a.late ? '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Late</span>' : '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">On time</span>'}</td>
     <td class="px-4 py-2">${a.distance_m == null ? '—' : Math.round(a.distance_m) + ' m'}</td>
     <td class="px-4 py-2 text-slate-500">${a.ip || '—'}</td>
   </tr>`).join('');
@@ -252,9 +339,9 @@ router.get('/programme/:id', requireAuth, (req, res) => {
   <div class="bg-white rounded-xl shadow overflow-x-auto">
     <table class="w-full text-sm">
       <thead class="bg-slate-50 text-slate-600 text-left">
-        <tr><th class="px-4 py-3">Student ID</th><th class="px-4 py-3">Name</th><th class="px-4 py-3">Time</th><th class="px-4 py-3">Distance from venue</th><th class="px-4 py-3">IP</th></tr>
+        <tr><th class="px-4 py-3">Student ID</th><th class="px-4 py-3">Name</th><th class="px-4 py-3">Time</th><th class="px-4 py-3">Status</th><th class="px-4 py-3">Distance from venue</th><th class="px-4 py-3">IP</th></tr>
       </thead>
-      <tbody>${trs || '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-400">No attendance yet.</td></tr>'}</tbody>
+      <tbody>${trs || '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">No attendance yet.</td></tr>'}</tbody>
     </table>
   </div>
 </div>`
@@ -266,8 +353,8 @@ router.get('/programme/:id/csv', requireAuth, (req, res) => {
   if (!p) return res.status(404).send('Not found');
   const rows = db.prepare('SELECT * FROM attendances WHERE programme_id = ? ORDER BY created_at').all(p.id);
   const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = ['Student ID,Name,Timestamp,Latitude,Longitude,Distance (m),IP',
-    ...rows.map(a => [a.student_id, a.student_name, a.created_at, a.lat, a.lng, a.distance_m, a.ip].map(esc).join(','))].join('\n');
+  const csv = ['Student ID,Name,Timestamp,Status,Latitude,Longitude,Distance (m),Accuracy (m),IP',
+    ...rows.map(a => [a.student_id, a.student_name, a.created_at, a.late ? 'Late' : 'On time', a.lat, a.lng, a.distance_m, a.accuracy_m, a.ip].map(esc).join(','))].join('\n');
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="attendance-${p.id}.csv"`);
   res.send(csv);

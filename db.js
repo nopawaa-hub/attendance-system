@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS programmes (
   token TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS students (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  student_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS attendances (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   programme_id INTEGER NOT NULL REFERENCES programmes(id) ON DELETE CASCADE,
@@ -27,10 +33,16 @@ CREATE TABLE IF NOT EXISTS attendances (
   lat REAL,
   lng REAL,
   distance_m REAL,
+  accuracy_m REAL,
+  late INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_prog_student ON attendances(programme_id, student_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_prog_device ON attendances(programme_id, device_hash);
 `);
+
+// Late column added after initial release; safe for existing databases.
+try { db.exec('ALTER TABLE attendances ADD COLUMN late INTEGER NOT NULL DEFAULT 0'); } catch (e) { /* already exists */ }
+try { db.exec('ALTER TABLE attendances ADD COLUMN accuracy_m REAL'); } catch (e) { /* already exists */ }
 
 module.exports = db;
