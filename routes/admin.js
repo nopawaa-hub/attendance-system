@@ -157,8 +157,7 @@ router.get('/add', requireAuth, (req, res) => {
     </div>
     <div>
       <label class="block text-sm font-semibold text-slate-700 mb-1">Location — click the map to place the centre, then set the allowed radius</label>
-      <div id="map" class="h-72 rounded-lg border z-0"></div>
-      <input type="hidden" name="lat" id="lat">
+      <div id="map" class="h-72 rounded-lg border z-0"></div>      <input type="hidden" name="lat" id="lat">
       <input type="hidden" name="lng" id="lng">
       <div class="mt-3 flex items-center gap-3">
         <input type="range" id="radius" name="radius_m" min="20" max="1000" value="100" step="10" class="flex-1" required>
@@ -169,45 +168,88 @@ router.get('/add', requireAuth, (req, res) => {
   </form>
 </div>
 <script>
-const map = L.map('map').setView([3.139, 101.6869], 13);
-// Google Maps tiles: street + satellite layers with a toggle.
-const streets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'], attribution: '&copy; Google Maps' });
-const satellite = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'], attribution: '&copy; Google Maps' });
-streets.addTo(map);
-L.control.layers({ 'Map': streets, 'Satellite': satellite }, null, { position: 'topright' }).addTo(map);
-let youMarker;
-function showYou(lat, lng, acc) {
-  map.setView([lat, lng], 17);
-  if (youMarker) map.removeLayer(youMarker);
-  youMarker = L.circle([lat, lng], { radius: acc || 20, color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 0.3, weight: 1 }).addTo(map);
-  L.circleMarker([lat, lng], { radius: 5, color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 1 }).addTo(map);
+// Google Maps raster tiles via MapLibre GL — streets + satellite with a toggle.
+const googleRaster = style =>
+  ({ version: 8, sources: {
+      google: { type: 'raster', tiles: ['https://mt0.google.com/vt/lyrs=' + style + '&x={x}&y={y}&z={z}', 'https://mt1.google.com/vt/lyrs=' + style + '&x={x}&y={y}&z={z}', 'https://mt2.google.com/vt/lyrs=' + style + '&x={x}&y={y}&z={z}', 'https://mt3.google.com/vt/lyrs=' + style + '&x={x}&y={y}&z={z}'], tileSize: 256, attribution: '&copy; Google Maps' }
+    }, layers: [{ id: 'google', type: 'raster', source: 'google' }] });
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: googleRaster('m'), // streets; toggled to satellite below
+  center: [101.6869, 3.139],
+  zoom: 13,
+  attributionControl: false
+});
+map.addControl(new maplibregl.NavigationControl(), 'top-right');
+map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showAccuracyCircle: true }), 'top-right');
+
+// Style toggle button (Map / Satellite)
+const styleBtn = document.createElement('button');
+styleBtn.textContent = 'Satellite';
+styleBtn.className = 'maplibregl-ctrl-group absolute top-2 left-2 z-10 bg-white px-3 py-1.5 text-xs font-semibold rounded shadow hover:bg-slate-100';
+let isSatellite = false;
+styleBtn.addEventListener('click', () => {
+  isSatellite = !isSatellite;
+  styleBtn.textContent = isSatellite ? 'Map' : 'Satellite';
+  map.setStyle(googleRaster(isSatellite ? 'y' : 'm'));
+  map.once('styledata', () => { redrawAll(); });
+});
+document.getElementById('map').appendChild(styleBtn);
+
+let marker, circle, lngLat = null;
+const radiusInput = document.getElementById('radius');
+
+function redrawAll() {
+  if (marker) marker.remove();
+  if (circle) circle.remove();
+  if (lngLat) place(lngLat[0], lngLat[1], false);
 }
-let marker, circle;
-function place(lat, lng) {
+function place(lng, lat, center = false) {
+  lngLat = [lng, lat];
   document.getElementById('lat').value = lat;
   document.getElementById('lng').value = lng;
-  if (marker) { marker.setLatLng([lat, lng]); } else { marker = L.marker([lat, lng], { draggable: true }).addTo(map); marker.on('dragend', e => place(e.target.getLatLng().lat, e.target.getLatLng().lng)); }
+  marker = new maplibregl.Marker({ draggable: true })
+    .setLngLat([lng, lat])
+    .addTo(map);
+  marker.on('dragend', () => { const p = marker.getLngLat(); place(p.lng, p.lat); });
   drawCircle();
+  if (center) map.easeTo({ center: [lng, lat] });
 }
 function drawCircle() {
-  const lat = document.getElementById('lat').value, lng = document.getElementById('lng').value, r = parseInt(document.getElementById('radius').value);
+  const lat = document.getElementById('lat').value, lng = document.getElementById('lng').value;
+  const r = parseInt(radiusInput.value);
   document.getElementById('radiusVal').textContent = r;
   if (!lat) return;
-  if (circle) circle.setLatLng([lat, lng]).setRadius(r); else circle = L.circle([lat, lng], { radius: r, color: '#4f46e5', fillOpacity: 0.15 }).addTo(map);
+  if (circle) circle.remove();
+  circle = { remove() {} };
+  const pts = [];
+  for (let i = 0; i <= 64; i++) {
+    const a = (i / 64) * 2 * Math.PI;
+    pts.push([lng + (r / 111320 / Math.cos(lat * Math.PI / 180)) * Math.cos(a), lat + (r / 110540) * Math.sin(a)]);
+  }
+  if (map.getLayer('radius-fill')) map.removeLayer('radius-fill');
+  if (map.getLayer('radius-line')) map.removeLayer('radius-line');
+  if (map.getSource('radius')) map.removeSource('radius');
+  map.addSource('radius', { type: 'geojson', data: { type: 'Polygon', coordinates: [[...pts, pts[0]]] } });
+  map.addLayer({ id: 'radius-fill', type: 'fill', source: 'radius', paint: { 'fill-color': '#4f46e5', 'fill-opacity': 0.15 } });
+  map.addLayer({ id: 'radius-line', type: 'line', source: 'radius', paint: { 'line-color': '#4f46e5', 'line-width': 2 } });
 }
-map.on('click', e => place(e.latlng.lat, e.latlng.lng));
-document.getElementById('radius').addEventListener('input', drawCircle);
+map.on('click', e => place(e.lngLat.lng, e.lngLat.lat));
+radiusInput.addEventListener('input', drawCircle);
 document.querySelector('form').addEventListener('submit', e => {
   if (!document.getElementById('lat').value) { alert('Please click the map to set the programme location.'); e.preventDefault(); }
 });
-// Show where the admin actually is.
-if (navigator.geolocation) {
-  navigator.geolocation.getCurrentPosition(
-    p => showYou(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
-    err => console.warn('Geolocation unavailable:', err.message),
-    { enableHighAccuracy: true, timeout: 10000 }
-  );
-}
+// Jump to the admin's actual location on load.
+map.on('load', () => {
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      p => { map.jumpTo({ center: [p.coords.longitude, p.coords.latitude], zoom: 17 }); },
+      err => console.warn('Geolocation unavailable:', err.message),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }
+});
 </script>`
   }));
 });
