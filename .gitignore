@@ -1,0 +1,7 @@
+node_modules/
+attendance.db
+attendance.db-wal
+attendance.db-shm
+cookies.txt
+.env
+.zcode/
