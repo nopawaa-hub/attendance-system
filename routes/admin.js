@@ -211,6 +211,7 @@ function place(lng, lat, center = false) {
   document.getElementById('lng').value = lng;
   if (!marker) {
     marker = new maplibregl.Marker({ draggable: true }).setLngLat([lng, lat]).addTo(map);
+    marker.on('drag', () => { const p = marker.getLngLat(); lngLat = [p.lng, p.lat]; document.getElementById('lat').value = p.lat; document.getElementById('lng').value = p.lng; drawCircle(); });
     marker.on('dragend', () => { const p = marker.getLngLat(); place(p.lng, p.lat); });
   } else {
     marker.setLngLat([lng, lat]);
@@ -234,8 +235,8 @@ function drawCircle() {
   if (map.getLayer('radius-line')) map.removeLayer('radius-line');
   if (map.getSource('radius')) map.removeSource('radius');
   map.addSource('radius', { type: 'geojson', data: { type: 'Polygon', coordinates: [[...pts, pts[0]]] } });
-  map.addLayer({ id: 'radius-fill', type: 'fill', source: 'radius', paint: { 'fill-color': '#4f46e5', 'fill-opacity': 0.15 } });
-  map.addLayer({ id: 'radius-line', type: 'line', source: 'radius', paint: { 'line-color': '#4f46e5', 'line-width': 2 } });
+  map.addLayer({ id: 'radius-fill', type: 'fill', source: 'radius', paint: { 'fill-color': '#4f46e5', 'fill-opacity': 0.25 } });
+  map.addLayer({ id: 'radius-line', type: 'line', source: 'radius', paint: { 'line-color': '#4f46e5', 'line-width': 2.5 } });
 }
 map.on('click', e => place(e.lngLat.lng, e.lngLat.lat));
 radiusInput.addEventListener('input', drawCircle);
