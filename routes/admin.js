@@ -209,10 +209,12 @@ function place(lng, lat, center = false) {
   lngLat = [lng, lat];
   document.getElementById('lat').value = lat;
   document.getElementById('lng').value = lng;
-  marker = new maplibregl.Marker({ draggable: true })
-    .setLngLat([lng, lat])
-    .addTo(map);
-  marker.on('dragend', () => { const p = marker.getLngLat(); place(p.lng, p.lat); });
+  if (!marker) {
+    marker = new maplibregl.Marker({ draggable: true }).setLngLat([lng, lat]).addTo(map);
+    marker.on('dragend', () => { const p = marker.getLngLat(); place(p.lng, p.lat); });
+  } else {
+    marker.setLngLat([lng, lat]);
+  }
   drawCircle();
   if (center) map.easeTo({ center: [lng, lat] });
 }
