@@ -413,6 +413,29 @@ router.get('/programme/:id', requireAuth, (req, res) => {
   </tr>`).join('');
   const pins = rows.filter(a => a.lat != null && a.lng != null)
     .map(a => ({ lng: a.lng, lat: a.lat, id: a.student_id, name: a.student_name, late: a.late, dist: a.distance_m }));
+  const failed = db.prepare('SELECT * FROM failed_attempts WHERE programme_id = ? ORDER BY created_at DESC LIMIT 200').all(p.id);
+  const failedTrs = failed.map(f => {
+    const reasonLabel = {
+      outside_radius: 'Outside venue radius',
+      low_accuracy: 'Location not precise',
+      stale_location: 'Stale location',
+      too_early: 'Before start time',
+      closed: 'After closing',
+      not_on_roster: 'Not on roster',
+      name_mismatch: 'Name mismatch',
+      duplicate_device: 'Duplicate device',
+      duplicate_student: 'Duplicate student',
+      server_error: 'Server error'
+    }[f.reason] || f.reason;
+    return `<tr class="border-b hover:bg-slate-50">
+      <td class="px-4 py-2 font-medium">${f.student_id}</td>
+      <td class="px-4 py-2">${f.student_name}</td>
+      <td class="px-4 py-2"><span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">${reasonLabel}</span></td>
+      <td class="px-4 py-2">${f.distance_m != null ? Math.round(f.distance_m) + ' m' : '—'}</td>
+      <td class="px-4 py-2 text-slate-500">${f.created_at} UTC</td>
+      <td class="px-4 py-2 text-slate-500">${f.ip || '—'}</td>
+    </tr>`;
+  }).join('');
   res.send(page({
     title: `Attendance — ${p.name}`,
     body: `
@@ -444,6 +467,19 @@ router.get('/programme/:id', requireAuth, (req, res) => {
       <tbody>${trs || '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">No attendance yet.</td></tr>'}</tbody>
     </table>
   </div>
+  ${failed.length ? `
+  <div class="bg-white rounded-xl shadow overflow-x-auto mt-6">
+    <div class="px-4 py-3 bg-red-50 border-b flex items-center gap-2">
+      <h2 class="font-semibold text-red-700">Rejected attempts</h2>
+      <span class="text-xs text-red-500">(${failed.length} recorded — students were shown an error and do not know this was logged)</span>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-600 text-left">
+        <tr><th class="px-4 py-3">Student ID</th><th class="px-4 py-3">Name</th><th class="px-4 py-3">Reason</th><th class="px-4 py-3">Distance from venue</th><th class="px-4 py-3">Time</th><th class="px-4 py-3">IP</th></tr>
+      </thead>
+      <tbody>${failedTrs}</tbody>
+    </table>
+  </div>` : ''}
 </div>
 <script>
 const venue = { lat: ${p.lat}, lng: ${p.lng}, radius: ${p.radius_m} };

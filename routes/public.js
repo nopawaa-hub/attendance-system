@@ -133,7 +133,20 @@ router.get('/a/:token', (req, res) => {
 // Submission
 router.post('/api/checkin', (req, res) => {
   const { token, student_id, student_name, lat, lng, accuracy, age_ms, device_hash } = req.body || {};
-  const fail = msg => res.status(400).json({ error: msg });
+  const ip = req.ip.replace('::ffff:', '');
+  // Silently record every rejected attempt (who, where, why) for admin review.
+  const fail = (msg, reason, extra = {}) => {
+    try {
+      if (student_id && p) {
+        db.prepare(`INSERT INTO failed_attempts (programme_id, student_id, student_name, reason, ip, device_hash, lat, lng, accuracy_m, distance_m)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)`)
+          .run(p.id, student_id, student_name || '', reason, ip, String(device_hash || ''),
+               typeof lat === 'number' ? lat : null, typeof lng === 'number' ? lng : null,
+               typeof accuracy === 'number' ? accuracy : null, extra.distance != null ? extra.distance : null);
+      }
+    } catch (e) { console.error('failed-attempt log error:', e.message); }
+    return res.status(400).json({ error: msg });
+  };
 
   const p = db.prepare('SELECT * FROM programmes WHERE token = ?').get(token);
   if (!p) return fail('Invalid attendance link.');
@@ -142,17 +155,17 @@ router.post('/api/checkin', (req, res) => {
 
   // GPS quality: reject inaccurate or stale readings so students retry with a fresh fix.
   if (typeof accuracy === 'number' && accuracy > 100) {
-    return fail(`Your location is not precise enough (±${Math.round(accuracy)} m). Step outside or near a window and try again.`);
+    return fail(`Your location is not precise enough (±${Math.round(accuracy)} m). Step outside or near a window and try again.`, 'low_accuracy');
   }
   if (typeof age_ms === 'number' && age_ms > 60000) {
-    return fail('Your location reading is stale. Please tap Check in again.');
+    return fail('Your location reading is stale. Please tap Check in again.', 'stale_location');
   }
 
   const now = new Date();
   const start = new Date(`${p.date}T${p.start_time}`);
   const end = new Date(`${p.date}T${p.end_time}`);
-  if (now < start) return fail('This attendance is not open yet. It starts at ' + p.start_time + '.');
-  if (now > end) return fail('This attendance has closed at ' + p.end_time + '.');
+  if (now < start) return fail('This attendance is not open yet. It starts at ' + p.start_time + '.', 'too_early');
+  if (now > end) return fail('This attendance has closed at ' + p.end_time + '.', 'closed');
   // Grace period: check-ins more than 15 min after start are flagged Late (still accepted).
   const late = now.getTime() > start.getTime() + 15 * 60 * 1000 ? 1 : 0;
 
@@ -161,21 +174,19 @@ router.post('/api/checkin', (req, res) => {
   const registered = db.prepare('SELECT * FROM students WHERE student_id = ?').get(student_id);
   const rosterCount = db.prepare('SELECT COUNT(*) AS c FROM students').get().c;
   if (rosterCount > 0) {
-    if (!registered) return fail(`Student ID ${student_id} is not on the roster for this programme. Please check your ID or contact the organizer.`);
+    if (!registered) return fail(`Student ID ${student_id} is not on the roster for this programme. Please check your ID or contact the organizer.`, 'not_on_roster');
     if (registered.name.toLowerCase() !== student_name.trim().toLowerCase()) {
-      return fail(`The name registered for ${student_id} is "${registered.name}". Please enter your name exactly as registered.`);
+      return fail(`The name registered for ${student_id} is "${registered.name}". Please enter your name exactly as registered.`, 'name_mismatch');
     }
   }
 
   const device = String(device_hash || '');
   if (!device) return fail('Device ID missing. Please use a normal browser.');
 
-  const ip = req.ip.replace('::ffff:', '');
-
   try {
     const distance = haversine(p.lat, p.lng, lat, lng);
     if (distance > p.radius_m) {
-      return fail(`You appear to be ${Math.round(distance)} m away from the venue (allowed: ${p.radius_m} m). You must be at the programme location to check in.`);
+      return fail(`You appear to be ${Math.round(distance)} m away from the venue (allowed: ${p.radius_m} m). You must be at the programme location to check in.`, 'outside_radius', { distance });
     }
     db.prepare(`INSERT INTO attendances (programme_id, student_id, student_name, ip, device_hash, lat, lng, distance_m, accuracy_m, late)
                 VALUES (?,?,?,?,?,?,?,?,?,?)`)
@@ -184,10 +195,10 @@ router.post('/api/checkin', (req, res) => {
     const row = db.prepare('SELECT id FROM attendances WHERE programme_id = ? AND student_id = ?').get(p.id, student_id);
     return res.json({ ok: true, student_name, late: !!late, receipt: 'ATD-' + String(row.id).padStart(5, '0'), checkin_time: now.toISOString() });
   } catch (e) {
-    if (/UNIQUE constraint failed.*device_hash/.test(e.message)) return fail('This device has already checked in for this programme. You cannot check in for a friend.');
-    if (/UNIQUE constraint failed.*student_id/.test(e.message)) return fail(`Attendance already recorded for student ID ${student_id}. You cannot check in twice.`);
+    if (/UNIQUE constraint failed.*device_hash/.test(e.message)) return fail('This device has already checked in for this programme. You cannot check in for a friend.', 'duplicate_device');
+    if (/UNIQUE constraint failed.*student_id/.test(e.message)) return fail(`Attendance already recorded for student ID ${student_id}. You cannot check in twice.`, 'duplicate_student');
     console.error(e);
-    return fail('Something went wrong. Please try again.');
+    return fail('Something went wrong. Please try again.', 'server_error');
   }
 
   // Log a warning if one IP submitted too many distinct students (possible proxy filling).

@@ -23,6 +23,20 @@ CREATE TABLE IF NOT EXISTS students (
   name TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS failed_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  programme_id INTEGER NOT NULL REFERENCES programmes(id) ON DELETE CASCADE,
+  student_id TEXT NOT NULL,
+  student_name TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  ip TEXT,
+  device_hash TEXT,
+  lat REAL,
+  lng REAL,
+  accuracy_m REAL,
+  distance_m REAL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS attendances (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   programme_id INTEGER NOT NULL REFERENCES programmes(id) ON DELETE CASCADE,
