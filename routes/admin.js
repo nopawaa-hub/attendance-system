@@ -66,7 +66,7 @@ router.get('/', requireAuth, (req, res) => {
       <td class="px-4 py-3 font-medium text-slate-800">${p.name}</td>
       <td class="px-4 py-3">${p.date}</td>
       <td class="px-4 py-3">${p.start_time} – ${p.end_time}</td>
-      <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs font-semibold ${s.cls}">${s.label}</span></td>
+      <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs font-semibold status-badge" data-date="${p.date}" data-start="${p.start_time}" data-end="${p.end_time}">${s.label}</span></td>
       <td class="px-4 py-3 text-center font-semibold">${p.count}</td>
       <td class="px-4 py-3 space-x-2 whitespace-nowrap">
         <a href="/admin/programme/${p.id}" class="text-indigo-600 hover:underline">Attendance</a>
@@ -96,7 +96,25 @@ router.get('/', requireAuth, (req, res) => {
       <tbody>${rows || '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">No programmes yet. Click "Add Programme" to create one.</td></tr>'}</tbody>
     </table>
   </div>
-</div>`
+</div>
+<script>
+// Keep status badges live without a page refresh.
+function refreshStatuses() {
+  document.querySelectorAll('.status-badge').forEach(b => {
+    const now = Date.now();
+    const start = new Date(b.dataset.date + 'T' + b.dataset.start).getTime();
+    const end = new Date(b.dataset.date + 'T' + b.dataset.end).getTime();
+    let label, cls;
+    if (now < start) { label = 'Upcoming'; cls = 'bg-amber-100 text-amber-800'; }
+    else if (now > end) { label = 'Closed'; cls = 'bg-slate-200 text-slate-600'; }
+    else { label = 'Open'; cls = 'bg-emerald-100 text-emerald-800'; }
+    b.textContent = label;
+    b.className = 'px-2 py-1 rounded-full text-xs font-semibold status-badge ' + cls;
+  });
+}
+refreshStatuses();
+setInterval(refreshStatuses, 30000);
+</script>`
   }));
 });
 
