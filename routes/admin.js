@@ -403,7 +403,7 @@ router.get('/programme/:id', requireAuth, (req, res) => {
   const p = db.prepare('SELECT * FROM programmes WHERE id = ?').get(req.params.id);
   if (!p) return res.status(404).send('Not found');
   const rows = db.prepare('SELECT * FROM attendances WHERE programme_id = ? ORDER BY created_at').all(p.id);
-  const trs = rows.map(a => `<tr class="border-b hover:bg-slate-50">
+  const trs = rows.map(a => `<tr class="border-b hover:bg-slate-50 cursor-pointer student-row" data-lat="${a.lat ?? ''}" data-lng="${a.lng ?? ''}" data-id="${a.student_id}" data-name="${a.student_name}" data-late="${a.late}" data-dist="${a.distance_m ?? ''}">
     <td class="px-4 py-2 font-medium">${a.student_id}</td>
     <td class="px-4 py-2">${a.student_name}</td>
     <td class="px-4 py-2">${a.created_at} UTC</td>
@@ -484,6 +484,21 @@ map2.on('load', () => {
     pins.forEach(s => bounds.extend([s.lng, s.lat]));
     map2.fitBounds(bounds, { padding: 60, maxZoom: 17 });
   }
+  // clicking a table row flies the map to that student's pin
+  let selectedStudent;
+  document.querySelectorAll('.student-row').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const lat = parseFloat(tr.dataset.lat), lng = parseFloat(tr.dataset.lng);
+      if (isNaN(lat) || isNaN(lng)) return;
+      map2.flyTo({ center: [lng, lat], zoom: 18, essential: true });
+      if (selectedStudent) selectedStudent.remove();
+      selectedStudent = new maplibregl.Popup({ closeOnClick: false, offset: 12 })
+        .setLngLat([lng, lat])
+        .setHTML('<b>' + tr.dataset.id + '</b> — ' + tr.dataset.name + '<br>' + (tr.dataset.late === '1' ? 'Late' : 'On time') + (tr.dataset.dist ? ' · ' + Math.round(tr.dataset.dist) + ' m from venue' : ''))
+        .addTo(map2);
+      tr.scrollIntoView({ block: 'nearest' });
+    });
+  });
 });
 </script>`
   }));
